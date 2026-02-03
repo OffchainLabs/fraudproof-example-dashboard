@@ -364,6 +364,41 @@
         font-weight: 600;
         margin-right: 8px;
       }
+      .tx-link {
+        color: #6aa7ff;
+        text-decoration: none;
+      }
+      .tx-link:hover {
+        text-decoration: underline;
+      }
+      .copy-btn {
+        margin-left: 8px;
+        padding: 2px 6px;
+        border-radius: 6px;
+        border: 1px solid #2a3343;
+        background: #1d2430;
+        color: #cfd6e4;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .copy-btn.copied {
+        color: #4cd5a7;
+        border-color: #2c5d52;
+      }
+      .copy-text {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+          "Courier New", monospace;
+      }
+      .copy-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .copy-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
       .details .edge-list {
         margin-top: 12px;
         padding-top: 12px;
@@ -444,7 +479,12 @@
         <h1>Challenge Manager Flow (On-chain Logs)</h1>
         <p>
           Replay of real logs from Arbitrum Sepolia for ChallengeManager
-          0x4DF4C4180DdB74F4d217FD7384120F0840A7802f, blocks 236463371–236470698.
+          <a
+            class="tx-link"
+            href="https://sepolia.arbiscan.io/address/0x4df4c4180ddb74f4d217fd7384120f0840a7802f"
+            target="_blank"
+            rel="noopener"
+          >0x4DF4C4180DdB74F4d217FD7384120F0840A7802f</a>, blocks 236463371–236470698.
         </p>
       </header>
 
@@ -950,6 +990,7 @@
                 length: added?.length ?? derivedLength ?? edge.length ?? null,
                 edges: [],
                 edgeIds: new Set(),
+                mutualIds: new Set(),
                 hasRival: false,
                 bisected: false,
                 ospConfirmed: false,
@@ -966,6 +1007,9 @@
                 id: edge.id,
                 hasRival: edgeHasRival,
               });
+            }
+            if (added?.mutualId) {
+              node.mutualIds.add(added.mutualId);
             }
             if (added?.hasRival === true || edge.hasRival === true) {
               node.hasRival = true;
@@ -1156,6 +1200,7 @@
               endHeight: node.endHeight,
               length: node.length,
               edges: node.edges,
+              mutualIds: node.mutualIds,
               hasRival: node.hasRival,
               bisected: node.bisected,
               ospConfirmed: node.ospConfirmed,
@@ -1231,6 +1276,33 @@
             return `EdgeConfirmedByOneStepProof ${shortHex(ev.edgeId)}`;
           }
           return ev.type;
+        }
+
+        async function copyToClipboard(value) {
+          if (!value) return false;
+          if (navigator.clipboard && window.isSecureContext) {
+            try {
+              await navigator.clipboard.writeText(value);
+              return true;
+            } catch (_error) {
+              // fallback below
+            }
+          }
+          const textarea = document.createElement("textarea");
+          textarea.value = value;
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          let ok = false;
+          try {
+            ok = document.execCommand("copy");
+          } catch (_error) {
+            ok = false;
+          }
+          document.body.removeChild(textarea);
+          return ok;
         }
 
         function emptyState() {
@@ -1478,11 +1550,29 @@
           const levelText = levelType ?? (node.level !== "-" ? `Level ${node.level}` : "Level ?");
           const rangeText = formatRangeText(node.startHeight, node.endHeight);
           const rivalStatus = node.hasRival ? "Yes" : "No";
+          const mutualIds = node.mutualIds ? Array.from(node.mutualIds) : [];
+          const mutualIdLabel = mutualIds.length > 1 ? "MutualIds" : "MutualId";
+          const mutualIdHtml =
+            mutualIds.length === 0
+              ? "-"
+              : mutualIds.length === 1
+                ? `<span class="copy-text">${shortHex(mutualIds[0], 8, 6)}</span><button class="copy-btn" data-copy="${mutualIds[0]}">Copy</button>`
+                : `<div class="copy-list">${mutualIds
+                    .map(
+                      (id) =>
+                        `<div class="copy-item"><span class="copy-text">${shortHex(id, 8, 6)}</span><button class="copy-btn" data-copy="${id}">Copy</button></div>`
+                    )
+                    .join("")}</div>`;
 
           let edgesHtml = "";
           if (node.edges && node.edges.length > 0) {
             edgesHtml = '<div class="edge-list"><strong>Edges:</strong>';
             node.edges.forEach((edge) => {
+              const edgeAdded = edgeAddedById.get(normalizeHex(edge.id));
+              const txHash = edgeAdded?.txHash ? normalizeHex(edgeAdded.txHash) : null;
+              const txLink = txHash
+                ? `https://sepolia.arbiscan.io/tx/${txHash}`
+                : null;
               const edgeStatus = state.edges.get(edge.id);
               const isLayerZero = edgeStatus?.isLayerZero === true;
               let status = "Active";
@@ -1503,7 +1593,18 @@
 
               edgesHtml += `
                 <div class="edge-item">
-                  <div class="edge-item-header">Edge ID: ${shortHex(edge.id)}</div>
+                  <div class="edge-item-header">Edge ID: <span class="copy-text">${shortHex(
+                    edge.id
+                  )}</span><button class="copy-btn" data-copy="${edge.id}">Copy</button></div>
+                  <div class="edge-item-detail">Tx: ${
+                    txLink
+                      ? `<a class="tx-link" href="${txLink}" target="_blank" rel="noopener">${shortHex(
+                          txHash,
+                          8,
+                          6
+                        )}</a>`
+                      : "-"
+                  }</div>
                   <div class="edge-item-detail">LayerZero: ${isLayerZero ? "Yes" : "No"}</div>
                   <div class="edge-item-detail">Staker: ${staker}</div>
                   <div class="edge-item-detail">Status: ${status}${hasRival ? " (hasRival)" : ""}</div>
@@ -1519,6 +1620,7 @@
             <h4>Node Details</h4>
             <div class="field"><span class="field-label">Range:</span>${rangeText}</div>
             <div class="field"><span class="field-label">Level:</span>${levelText}</div>
+            <div class="field"><span class="field-label">${mutualIdLabel}:</span>${mutualIdHtml}</div>
             <div class="field"><span class="field-label">Rival Status:</span>${rivalStatus}</div>
             ${edgesHtml}
           `;
@@ -1848,7 +1950,7 @@
           }
           state.appliedEvents.forEach((ev, index) => {
             const li = document.createElement("li");
-            li.textContent = `${index + 1}. [${ev.blockNumber}/${ev.logIndex}] ${formatEvent(
+            li.textContent = `[${ev.blockNumber}/${ev.logIndex}] ${formatEvent(
               ev,
               levelMeta
             )}`;
@@ -1949,6 +2051,24 @@
           if (timer) {
             pause();
             play();
+          }
+        });
+
+        document.addEventListener("click", async (event) => {
+          const button = event.target.closest(".copy-btn");
+          if (!button) return;
+          event.stopPropagation();
+          const value = button.getAttribute("data-copy");
+          if (!value) return;
+          const original = button.textContent;
+          const ok = await copyToClipboard(value);
+          if (ok) {
+            button.textContent = "Copied";
+            button.classList.add("copied");
+            setTimeout(() => {
+              button.textContent = original;
+              button.classList.remove("copied");
+            }, 1200);
           }
         });
         
