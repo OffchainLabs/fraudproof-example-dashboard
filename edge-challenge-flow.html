@@ -35,18 +35,49 @@
       .controls {
         margin: 20px 0 16px;
         display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .controls-row {
+        display: flex;
         flex-wrap: wrap;
         gap: 10px;
         align-items: center;
       }
       .controls button,
-      .controls select {
+      .controls select,
+      .controls input[type="text"] {
         background: #1d2430;
         color: #f5f5f5;
         border: 1px solid #2a3343;
         padding: 8px 12px;
         border-radius: 6px;
         cursor: pointer;
+      }
+      .controls input[type="text"] {
+        cursor: text;
+        width: 400px;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      .controls input[type="text"].validating {
+        border-color: #f9a825;
+      }
+      .controls input[type="text"].valid {
+        border-color: #4cd5a7;
+      }
+      .controls input[type="text"].invalid {
+        border-color: #ff4d4d;
+      }
+      .cm-status {
+        font-size: 12px;
+        color: #b6b6b6;
+      }
+      .cm-status.error {
+        color: #ff4d4d;
+      }
+      .cm-status.ok {
+        color: #4cd5a7;
       }
       .controls button[disabled] {
         opacity: 0.5;
@@ -480,29 +511,40 @@
         <p>
           Replay of real logs from Arbitrum Sepolia for ChallengeManager
           <a
+            id="cmLink"
             class="tx-link"
-            href="https://sepolia.arbiscan.io/address/0x4df4c4180ddb74f4d217fd7384120f0840a7802f"
+            href="https://sepolia.arbiscan.io/address/0x5a005C3Fb139801c275e398D6bBAf637f701D82d"
             target="_blank"
             rel="noopener"
-          >0x4DF4C4180DdB74F4d217FD7384120F0840A7802f</a>, blocks 236463371–236470698.
+          >0x5a005C3Fb139801c275e398D6bBAf637f701D82d</a>.
         </p>
       </header>
 
       <section class="controls">
-        <button id="playBtn">Play</button>
-        <button id="nextBtn">Next</button>
-        <button id="showAllBtn">Show All</button>
-        <button id="resetBtn">Reset</button>
-        <label>
-          Speed
-          <select id="speedSelect">
-            <option value="1800">0.5x</option>
-            <option value="1200" selected>1x</option>
-            <option value="800">1.5x</option>
-            <option value="500">2x</option>
-          </select>
-        </label>
-        <span id="progressText">0 / 0</span>
+        <div class="controls-row">
+          <label>
+            Challenge Manager (Arb Sepolia)
+            <input type="text" id="cmInput" placeholder="0x... (Arb Sepolia address)" value="0x5a005C3Fb139801c275e398D6bBAf637f701D82d" />
+          </label>
+          <button id="cmApplyBtn">Apply</button>
+          <span id="cmStatus" class="cm-status"></span>
+        </div>
+        <div class="controls-row">
+          <button id="playBtn">Play</button>
+          <button id="nextBtn">Next</button>
+          <button id="showAllBtn">Show All</button>
+          <button id="resetBtn">Reset</button>
+          <label>
+            Speed
+            <select id="speedSelect">
+              <option value="1800">0.5x</option>
+              <option value="1200" selected>1x</option>
+              <option value="800">1.5x</option>
+              <option value="500">2x</option>
+            </select>
+          </label>
+          <span id="progressText">0 / 0</span>
+        </div>
       </section>
 
       <section class="flow">
@@ -553,9 +595,8 @@
     <script>
       (() => {
         const RPC_URL =
-          "https://sepolia-rollup.arbitrum.io/rpc";
-        const CHALLENGE_MANAGER = "0x4DF4C4180DdB74F4d217FD7384120F0840A7802f";
-        const BLOCK_RANGE = { from: 236463371, to: 236470698 };
+          "https://arb-sepolia.g.alchemy.com/v2/A9Awdfc74bkIT_CzQkOcyM036BSQxyk4";
+        let CHALLENGE_MANAGER = "0x5a005C3Fb139801c275e398D6bBAf637f701D82d";
 
         const EDGE_ADDED_TOPIC =
           "0xaa4b66b1ce938c06e2a3f8466bae10ef62e747630e3859889f4719fc6427b5a4";
@@ -633,6 +674,10 @@
           resetBtn: document.getElementById("resetBtn"),
           speedSelect: document.getElementById("speedSelect"),
           progressText: document.getElementById("progressText"),
+          cmInput: document.getElementById("cmInput"),
+          cmApplyBtn: document.getElementById("cmApplyBtn"),
+          cmStatus: document.getElementById("cmStatus"),
+          cmLink: document.getElementById("cmLink"),
         };
 
         const toHex = (value) => `0x${value.toString(16)}`;
@@ -725,7 +770,7 @@
           const logs = await rpcCall("eth_getLogs", [
             {
               fromBlock: "0x0",
-              toBlock: toHex(BLOCK_RANGE.to),
+              toBlock: "latest",
               address: CHALLENGE_MANAGER,
               topics: [EDGE_ADDED_TOPIC, id],
             },
@@ -1571,7 +1616,7 @@
               const edgeAdded = edgeAddedById.get(normalizeHex(edge.id));
               const txHash = edgeAdded?.txHash ? normalizeHex(edgeAdded.txHash) : null;
               const txLink = txHash
-                ? `https://sepolia.arbiscan.io/tx/${txHash}`
+                ? `https://sepolia.etherscan.io/tx/${txHash}`
                 : null;
               const edgeStatus = state.edges.get(edge.id);
               const isLayerZero = edgeStatus?.isLayerZero === true;
@@ -2054,6 +2099,53 @@
           }
         });
 
+        // LAYERZERO_BIGSTEPEDGE_HEIGHT() selector = keccak256 first 4 bytes
+        // We call this function and check the result is masked with 0x416e6657
+        const LZ_BIGSTEP_SELECTOR = "0x416e6657";
+
+        async function validateChallengeManager(address) {
+          const result = await rpcCall("eth_call", [
+            { to: address, data: LZ_BIGSTEP_SELECTOR },
+            "latest",
+          ]);
+          // If the call succeeds and returns data (non-empty, non-0x), it's a valid challenge manager
+          if (!result || result === "0x" || result === "0x0") {
+            throw new Error("LAYERZERO_BIGSTEPEDGE_HEIGHT() returned empty result");
+          }
+          return true;
+        }
+
+        elements.cmApplyBtn.addEventListener("click", async () => {
+          const address = elements.cmInput.value.trim();
+          if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+            elements.cmInput.className = "invalid";
+            elements.cmStatus.textContent = "Invalid address format";
+            elements.cmStatus.className = "cm-status error";
+            return;
+          }
+          elements.cmInput.className = "validating";
+          elements.cmStatus.textContent = "Validating...";
+          elements.cmStatus.className = "cm-status";
+          elements.cmApplyBtn.disabled = true;
+          try {
+            await validateChallengeManager(address);
+            elements.cmStatus.textContent = "Fetching logs from RPC...";
+            CHALLENGE_MANAGER = address;
+            elements.cmLink.href = `https://sepolia.arbiscan.io/address/${address}`;
+            elements.cmLink.textContent = address;
+            await loadEvents();
+            elements.cmInput.className = "valid";
+            elements.cmStatus.textContent = "Valid challenge manager";
+            elements.cmStatus.className = "cm-status ok";
+          } catch (err) {
+            elements.cmInput.className = "invalid";
+            elements.cmStatus.textContent = "Not a valid challenge manager: " + err.message;
+            elements.cmStatus.className = "cm-status error";
+          } finally {
+            elements.cmApplyBtn.disabled = false;
+          }
+        });
+
         document.addEventListener("click", async (event) => {
           const button = event.target.closest(".copy-btn");
           if (!button) return;
@@ -2091,8 +2183,8 @@
           try {
             const logs = await rpcCall("eth_getLogs", [
               {
-                fromBlock: toHex(BLOCK_RANGE.from),
-                toBlock: toHex(BLOCK_RANGE.to),
+                fromBlock: "0x0",
+                toBlock: "latest",
                 address: CHALLENGE_MANAGER,
               },
             ]);
